@@ -1,4 +1,3 @@
-// /api/callback.js — Decap CMS GitHub OAuth callback
 export default async function handler(req, res) {
   const code = req.query.code;
   if (!code) return sendHtml(res, failHtml("Missing OAuth code."));
@@ -16,13 +15,9 @@ export default async function handler(req, res) {
       body: new URLSearchParams({ client_id, client_secret, code })
     });
     const data = await r.json();
-    if (!data.access_token) {
-      return sendHtml(res, failHtml("OAuth exchange failed.", data));
-    }
+    if (!data.access_token) return sendHtml(res, failHtml("OAuth exchange failed.", data));
 
     const token = data.access_token;
-
-    // IMPORTANT: include provider:"github" in the message payload
     const payload = JSON.stringify({ token, provider: "github" }).replace(/</g, "\\u003c");
 
     const html = `<!doctype html>
@@ -30,10 +25,11 @@ export default async function handler(req, res) {
 <body>
 <script>
   (function () {
+    // Try to target the opener's exact origin (GitHub Pages), fall back to "*"
+    var openerOrigin = (document.referrer ? new URL(document.referrer).origin : "*");
     var msg = 'authorization:github:success:${payload}';
-    try { if (window.opener) window.opener.postMessage(msg, '*'); } catch(e) {}
-    // send twice just in case, then close
-    setTimeout(function(){ try { window.opener && window.opener.postMessage(msg, '*'); } catch(e) {} }, 80);
+    try { if (window.opener) window.opener.postMessage(msg, openerOrigin); } catch(e) {}
+    setTimeout(function(){ try { window.opener && window.opener.postMessage(msg, openerOrigin); } catch(e) {} }, 80);
     setTimeout(function(){ window.close(); }, 160);
   })();
 </script>
@@ -49,9 +45,8 @@ function sendHtml(res, html) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.status(200).end(html);
 }
-
 function failHtml(message, detail) {
-  const safe = (v) => (v ? String(v) : "");
+  const safe = v => (v ? String(v) : "");
   return `<!doctype html>
 <html><meta charset="utf-8"><title>Sign-in error</title>
 <body>
@@ -60,7 +55,7 @@ function failHtml(message, detail) {
 <script>
   (function () {
     var wire = 'authorization:github:failure:' + JSON.stringify({ error: ${JSON.stringify(message)} });
-    try { if (window.opener) window.opener.postMessage(wire, '*'); } catch(e) {}
+    try { if (window.opener) window.opener.postMessage(wire, (document.referrer ? new URL(document.referrer).origin : "*")); } catch(e) {}
     setTimeout(function(){ window.close(); }, 600);
   })();
 </script>
