@@ -1,17 +1,12 @@
-// api/callback.js
-// Handles GitHub OAuth callback for Decap CMS.
-// Env vars required in Vercel: OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET
-
+// /api/callback.js — Decap CMS GitHub OAuth callback
 export default async function handler(req, res) {
   const code = req.query.code;
-  if (!code) {
-    return sendHtml(res, failureHtml("Missing OAuth code."));
-  }
+  if (!code) return sendHtml(res, failHtml("Missing OAuth code."));
 
   const client_id = process.env.OAUTH_CLIENT_ID;
   const client_secret = process.env.OAUTH_CLIENT_SECRET;
   if (!client_id || !client_secret) {
-    return sendHtml(res, failureHtml("Server missing OAuth env vars."));
+    return sendHtml(res, failHtml("Missing OAuth env vars on server."));
   }
 
   try {
@@ -21,40 +16,32 @@ export default async function handler(req, res) {
       body: new URLSearchParams({ client_id, client_secret, code })
     });
     const data = await r.json();
-
     if (!data.access_token) {
-      return sendHtml(res, failureHtml("OAuth exchange failed.", data));
+      return sendHtml(res, failHtml("OAuth exchange failed.", data));
     }
 
     const token = data.access_token;
-    // Decap listens for: 'authorization:github:success:{"token":"..."}'
-    const payload = JSON.stringify({ token }).replace(/</g, "\\u003c");
+
+    // IMPORTANT: include provider:"github" in the message payload
+    const payload = JSON.stringify({ token, provider: "github" }).replace(/</g, "\\u003c");
 
     const html = `<!doctype html>
-<html>
-  <meta charset="utf-8">
-  <title>Signing in…</title>
-  <body>
-    <script>
-      (function () {
-        var msg = 'authorization:github:success:${payload}';
-        try {
-          if (window.opener) {
-            // Using "*" for compatibility; tighten to your site origin if you prefer.
-            window.opener.postMessage(msg, "*");
-          }
-        } catch (e) {}
-        // fire twice just in case, then close
-        setTimeout(function(){ try{ window.opener && window.opener.postMessage(msg, "*"); }catch(e){} }, 80);
-        setTimeout(function(){ window.close(); }, 160);
-      })();
-    </script>
-    <p>Signed in. You can close this window.</p>
-  </body>
-</html>`;
+<html><meta charset="utf-8"><title>Signing in…</title>
+<body>
+<script>
+  (function () {
+    var msg = 'authorization:github:success:${payload}';
+    try { if (window.opener) window.opener.postMessage(msg, '*'); } catch(e) {}
+    // send twice just in case, then close
+    setTimeout(function(){ try { window.opener && window.opener.postMessage(msg, '*'); } catch(e) {} }, 80);
+    setTimeout(function(){ window.close(); }, 160);
+  })();
+</script>
+<p>Signed in. You can close this window.</p>
+</body></html>`;
     return sendHtml(res, html);
-  } catch (err) {
-    return sendHtml(res, failureHtml("Unexpected error during OAuth.", { error: String(err) }));
+  } catch (e) {
+    return sendHtml(res, failHtml("Unexpected error.", String(e)));
   }
 }
 
@@ -63,23 +50,19 @@ function sendHtml(res, html) {
   res.status(200).end(html);
 }
 
-function failureHtml(message, detail) {
-  const safe = (v) => JSON.stringify(v || "").replace(/</g, "\\u003c");
-  const msg = safe(message);
-  const det = safe(detail);
+function failHtml(message, detail) {
+  const safe = (v) => (v ? String(v) : "");
   return `<!doctype html>
-<html><meta charset="utf-8"><title>Sign-in error</title><body>
+<html><meta charset="utf-8"><title>Sign-in error</title>
+<body>
+<p>Sign-in failed: ${safe(message)}</p>
+<pre style="white-space:pre-wrap">${safe(detail)}</pre>
 <script>
   (function () {
-    var msg = 'authorization:github:failure:' + ${JSON.stringify('"')} + ${JSON.stringify('"')} ; // placeholder
-    try {
-      var payload = { error: ${msg}, detail: ${det} };
-      var wire = 'authorization:github:failure:' + JSON.stringify(payload);
-      if (window.opener) window.opener.postMessage(wire, "*");
-    } catch (e) {}
-    setTimeout(function(){ window.close(); }, 300);
+    var wire = 'authorization:github:failure:' + JSON.stringify({ error: ${JSON.stringify(message)} });
+    try { if (window.opener) window.opener.postMessage(wire, '*'); } catch(e) {}
+    setTimeout(function(){ window.close(); }, 600);
   })();
 </script>
-<p>Sign-in failed: ${msg}</p>
 </body></html>`;
 }
